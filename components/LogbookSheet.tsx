@@ -1,11 +1,6 @@
 import type { PersonalLogEntry } from '@/lib/types'
-import { formatMinutes } from '@/lib/utils'
 
 const ROWS_PER_PAGE = 11
-
-interface RowData {
-  entry?: PersonalLogEntry
-}
 
 function hhmm(min?: number) {
   if (!min) return ''
@@ -13,177 +8,261 @@ function hhmm(min?: number) {
   const m = min % 60
   return `${h}:${String(m).padStart(2, '0')}`
 }
-
-function dateparts(d?: string) {
+function dpart(d?: string) {
   if (!d) return { mon: '', day: '' }
   const dt = new Date(d)
   return { mon: String(dt.getMonth() + 1), day: String(dt.getDate()) }
 }
-
 function tm(iso?: string) {
   if (!iso) return ''
   const dt = new Date(iso)
   return `${String(dt.getHours()).padStart(2, '0')}${String(dt.getMinutes()).padStart(2, '0')}`
 }
+function ymd(d?: string) {
+  if (!d) return { y: '', m: '', d: '' }
+  const dt = new Date(d)
+  return { y: String(dt.getFullYear()), m: String(dt.getMonth() + 1), d: String(dt.getDate()) }
+}
 
-// One logbook page = ROWS_PER_PAGE data rows + 3 total rows
+const isWinch = (e: PersonalLogEntry) => (e.launch_method_name ?? '').includes('ウィンチ') || (e.launch_method_name ?? '').includes('ウインチ')
+const isSolo = (e: PersonalLogEntry) =>
+  (e.solo_time ?? 0) > 0 || (e.pic_time ?? 0) > 0 || ((e.dual_instruction_time ?? 0) === 0)
+
+interface Totals {
+  swT: number; swC: number; saT: number; saC: number
+  dwT: number; dwC: number; daT: number; daC: number
+  ft: number; cc: number; ccC: number; inst: number; instC: number; other: number
+}
+function calc(entries: PersonalLogEntry[]): Totals {
+  const o: Totals = { swT: 0, swC: 0, saT: 0, saC: 0, dwT: 0, dwC: 0, daT: 0, daC: 0, ft: 0, cc: 0, ccC: 0, inst: 0, instC: 0, other: 0 }
+  for (const e of entries) {
+    const t = e.total_flight_time
+    const winch = isWinch(e)
+    const dual = (e.dual_instruction_time ?? 0) > 0
+    if (dual) {
+      if (winch) { o.dwT += t; o.dwC++ } else { o.daT += t; o.daC++ }
+    } else {
+      if (winch) { o.swT += t; o.swC++ } else { o.saT += t; o.saC++ }
+    }
+    o.ft += t
+    const cc = e.cross_country_pic_solo_picus_time ?? 0
+    if (cc) { o.cc += cc; o.ccC++ }
+    const ins = e.instruction_time ?? 0
+    if (ins) { o.inst += ins; o.instC++ }
+    o.other += e.other_flight_time ?? 0
+  }
+  return o
+}
+const cnt = (n: number) => (n > 0 ? `${n}回` : '回')
+
 export default function LogbookSheet({
   entries,
+  priorEntries = [],
   pilotName,
-  forwardTime = 0,
-  forwardCount = 0,
 }: {
   entries: PersonalLogEntry[]
+  priorEntries?: PersonalLogEntry[]
   pilotName: string
-  forwardTime?: number
-  forwardCount?: number
 }) {
-  const rows: RowData[] = []
-  for (let i = 0; i < ROWS_PER_PAGE; i++) rows.push({ entry: entries[i] })
+  const rows: (PersonalLogEntry | undefined)[] = []
+  for (let i = 0; i < ROWS_PER_PAGE; i++) rows.push(entries[i])
 
-  // page subtotals — winch solo, aero solo, winch dual, aero dual (glider)
-  const sum = (fn: (e: PersonalLogEntry) => number) =>
-    entries.reduce((s, e) => s + fn(e), 0)
+  const page = calc(entries)
+  const fwd = calc(priorEntries)
+  const total = calc([...priorEntries, ...entries])
 
-  const isWinch = (e: PersonalLogEntry) => (e.launch_method_name ?? '').includes('ウィンチ')
-  const isSolo = (e: PersonalLogEntry) => (e.solo_time ?? 0) > 0 || ((e.pic_time ?? 0) > 0)
+  const firstDate = entries[0]?.date
+  const lastDate = entries[entries.length - 1]?.date
+  const f = ymd(firstDate)
+  const l = ymd(lastDate)
 
-  const soloWinch = sum(e => (isWinch(e) && isSolo(e)) ? e.total_flight_time : 0)
-  const soloAero = sum(e => (!isWinch(e) && isSolo(e)) ? e.total_flight_time : 0)
-  const dualWinch = sum(e => (isWinch(e) && (e.dual_instruction_time ?? 0) > 0) ? e.total_flight_time : 0)
-  const dualAero = sum(e => (!isWinch(e) && (e.dual_instruction_time ?? 0) > 0) ? e.total_flight_time : 0)
-  const pageTime = sum(e => e.total_flight_time)
-  const pageLandings = sum(e => e.landing_count)
-  const ccTime = sum(e => e.cross_country_pic_solo_picus_time ?? 0)
-  const instTime = sum(e => e.instruction_time ?? 0)
-
-  const totalTime = forwardTime + pageTime
-  const totalCount = forwardCount + pageLandings
-
-  const cell = 'border border-black px-0.5 text-center align-middle'
+  const c = 'border border-black px-0.5 align-middle text-center'
   const th = 'border border-black text-center align-middle leading-tight font-normal'
 
+  // value cells (cols 10..26) for a totals row
+  function timeCells(o: Totals, key: string) {
+    const v = [
+      hhmm(o.ft), hhmm(o.swT), hhmm(o.saT), hhmm(o.dwT), hhmm(o.daT),
+      '', '',            // release, max
+      '', '', '',        // mg land g/m, mg flight time
+      '', '', '', '',    // mg solo m/g, dual m/g
+      hhmm(o.cc), hhmm(o.inst), hhmm(o.other),
+    ]
+    return v.map((x, i) => <td key={`${key}-t-${i}`} className={c}>{x}</td>)
+  }
+  function countCells(o: Totals, key: string) {
+    const v = [
+      '', cnt(o.swC), cnt(o.saC), cnt(o.dwC), cnt(o.daC),
+      '', '',
+      cnt(0), cnt(0), '',
+      cnt(0), cnt(0), cnt(0), cnt(0),
+      cnt(o.ccC), cnt(o.instC), '',
+    ]
+    return v.map((x, i) => <td key={`${key}-c-${i}`} className={c}>{x}</td>)
+  }
+
   return (
-    <div className="logbook-sheet bg-white text-black" style={{ fontFamily: 'serif' }}>
-      <table className="w-full border-collapse" style={{ fontSize: '7px', tableLayout: 'fixed' }}>
+    <div className="logbook-sheet bg-white text-black overflow-x-auto" style={{ fontFamily: 'serif' }}>
+      <table className="border-collapse" style={{ fontSize: '6.5px', tableLayout: 'fixed', width: '1180px' }}>
         <colgroup>
-          <col style={{ width: '3%' }} /><col style={{ width: '3%' }} />{/* date mon/day */}
-          <col style={{ width: '7%' }} /><col style={{ width: '7%' }} />{/* type / reg */}
-          <col style={{ width: '6%' }} /><col style={{ width: '6%' }} />{/* take off / landing place */}
-          <col style={{ width: '5%' }} /><col style={{ width: '5%' }} />{/* take off / landing time */}
-          <col style={{ width: '4%' }} />{/* no of landing */}
-          <col style={{ width: '7%' }} />{/* flight time */}
-          <col style={{ width: '6%' }} /><col style={{ width: '6%' }} />{/* solo winch/aero */}
-          <col style={{ width: '6%' }} /><col style={{ width: '6%' }} />{/* dual winch/aero */}
-          <col style={{ width: '4%' }} /><col style={{ width: '4%' }} />{/* release / max alt */}
-          <col style={{ width: '6%' }} />{/* cross country */}
-          <col style={{ width: '6%' }} />{/* instruction */}
+          <col style={{ width: '1.8%' }} /><col style={{ width: '1.8%' }} />{/* 月 日 */}
+          <col style={{ width: '5%' }} /><col style={{ width: '5%' }} />{/* type reg */}
+          <col style={{ width: '4%' }} /><col style={{ width: '4%' }} />{/* take/land place */}
+          <col style={{ width: '3.2%' }} /><col style={{ width: '3.2%' }} />{/* take/land time */}
+          <col style={{ width: '2.6%' }} />{/* no of landing */}
+          <col style={{ width: '4.5%' }} />{/* glider flight time */}
+          <col style={{ width: '3.2%' }} /><col style={{ width: '3.2%' }} />{/* solo winch/aero */}
+          <col style={{ width: '3.2%' }} /><col style={{ width: '3.2%' }} />{/* dual winch/aero */}
+          <col style={{ width: '2.6%' }} /><col style={{ width: '2.6%' }} />{/* release/max */}
+          <col style={{ width: '2.4%' }} /><col style={{ width: '2.4%' }} />{/* mg land glider/motor */}
+          <col style={{ width: '3.5%' }} />{/* mg flight time */}
+          <col style={{ width: '2.8%' }} /><col style={{ width: '2.8%' }} />{/* mg solo motor/glider */}
+          <col style={{ width: '2.8%' }} /><col style={{ width: '2.8%' }} />{/* mg dual motor/glider */}
+          <col style={{ width: '3.5%' }} />{/* cross country */}
+          <col style={{ width: '3.5%' }} />{/* instruction */}
+          <col style={{ width: '3.5%' }} />{/* other time */}
           <col />{/* remarks */}
         </colgroup>
+
         <thead>
-          {/* group header row */}
-          <tr style={{ height: '14px' }}>
+          {/* group row */}
+          <tr style={{ height: '12px' }}>
             <th className={th} colSpan={2} rowSpan={2}>(1) DATE<br />年月日</th>
             <th className={th} colSpan={2}>(2)(3) GLIDER 滑空機</th>
             <th className={th} colSpan={2}>(4) LOCATION 離着陸の区間</th>
             <th className={th} colSpan={2}>(5) TIME 時刻</th>
-            <th className={th} rowSpan={2}>(6) 着陸回数<br />NO.OF<br />LANDING</th>
+            <th className={th} rowSpan={3}>(6) NO.OF<br />LANDING<br />着陸回数</th>
             <th className={th} colSpan={5}>(7) GLIDER 滑空機</th>
             <th className={th} colSpan={2}>ALTITUDE 高度</th>
-            <th className={th} rowSpan={2}>(9) CROSS<br />COUNTRY<br />野外飛行</th>
-            <th className={th} rowSpan={2}>(10) INST.<br />操縦教員<br />としての時間</th>
+            <th className={th} colSpan={7}>(8) MOTOR GLIDER 動力滑空機</th>
+            <th className={th} rowSpan={3}>(9) CROSS<br />COUNTRY<br />TIME<br />野外飛行</th>
+            <th className={th} rowSpan={3}>(10) INST.<br />TIME<br />操縦教員<br />としての時間</th>
+            <th className={th} rowSpan={3}>その他の<br />飛行時間</th>
             <th className={th} rowSpan={3}>(11) REMARKS<br />補足事項<br />練習科目 その他</th>
           </tr>
-          <tr style={{ height: '20px' }}>
-            <th className={th}>TYPE<br />型式</th>
-            <th className={th}>REG.NO<br />登録記号</th>
-            <th className={th}>TAKE OFF<br />離陸地</th>
-            <th className={th}>LANDING<br />着陸地</th>
-            <th className={th}>TAKE OFF<br />離陸</th>
-            <th className={th}>LANDING<br />着陸</th>
+          {/* sub row */}
+          <tr style={{ height: '16px' }}>
+            <th className={th} rowSpan={2}>TYPE<br />型式</th>
+            <th className={th} rowSpan={2}>REG.NO<br />登録記号</th>
+            <th className={th} rowSpan={2}>TAKE OFF<br />離陸地</th>
+            <th className={th} rowSpan={2}>LANDING<br />着陸地</th>
+            <th className={th} rowSpan={2}>TAKE OFF<br />離陸</th>
+            <th className={th} rowSpan={2}>LANDING<br />着陸</th>
             <th className={th} rowSpan={2}>FLIGHT<br />TIME<br />飛行時間</th>
-            <th className={th} colSpan={2}>SOLO OR P.I.C 単独又は機長</th>
-            <th className={th} colSpan={2}>DUAL 同乗教育</th>
+            <th className={th} colSpan={2}>SOLO OR P.I.C<br />単独又は機長</th>
+            <th className={th} colSpan={2}>DUAL<br />同乗教育</th>
             <th className={th} rowSpan={2}>RELEASE<br />離脱</th>
             <th className={th} rowSpan={2}>MAX<br />最高</th>
+            <th className={th} colSpan={2}>NO.OF LAND<br />着陸回数</th>
+            <th className={th} rowSpan={2}>FLIGHT<br />TIME<br />飛行時間</th>
+            <th className={th} colSpan={2}>SOLO OR P.I.C<br />単独又は機長</th>
+            <th className={th} colSpan={2}>DUAL<br />同乗教育</th>
           </tr>
-          <tr style={{ height: '20px' }}>
-            <th className={th} colSpan={2}>YEAR 年</th>
-            <th className={th} colSpan={6}></th>
-            <th className={th}>WINCH/AUTO<br />ウインチ曳航</th>
+          {/* leaf row */}
+          <tr style={{ height: '18px' }}>
+            <th className={th}>月</th>
+            <th className={th}>日</th>
+            <th className={th}>WINCH<br />/AUTO<br />ウインチ曳航</th>
             <th className={th}>AERO TOW<br />航空機曳航</th>
-            <th className={th}>WINCH/AUTO<br />ウインチ曳航</th>
+            <th className={th}>WINCH<br />/AUTO<br />ウインチ曳航</th>
             <th className={th}>AERO TOW<br />航空機曳航</th>
-            <th className={th} colSpan={2}></th>
-            <th className={th} colSpan={2}></th>
+            <th className={th}>GLIDER<br />滑空</th>
+            <th className={th}>MOTOR<br />動力</th>
+            <th className={th}>MOTOR<br />動力</th>
+            <th className={th}>GLIDER<br />滑空</th>
+            <th className={th}>MOTOR<br />動力</th>
+            <th className={th}>GLIDER<br />滑空</th>
           </tr>
         </thead>
+
         <tbody>
-          {rows.map((r, idx) => {
-            const e = r.entry
-            const dp = dateparts(e?.date)
+          {rows.map((e, idx) => {
+            const dp = dpart(e?.date)
             const winch = e ? isWinch(e) : false
-            const solo = e ? isSolo(e) : false
             const dual = e ? (e.dual_instruction_time ?? 0) > 0 : false
+            const solo = !dual
             return (
-              <tr key={idx} style={{ height: '22px' }}>
-                <td className={cell}>{dp.mon}</td>
-                <td className={cell}>{dp.day}</td>
-                <td className={cell}>{e?.aircraft_type ?? ''}</td>
-                <td className={cell}>{e?.registration_number ?? ''}</td>
-                <td className={cell}>{e?.departure_place ?? ''}</td>
-                <td className={cell}>{e?.arrival_place ?? ''}</td>
-                <td className={cell}>{tm(e?.departure_time)}</td>
-                <td className={cell}>{tm(e?.arrival_time)}</td>
-                <td className={cell}>{e?.landing_count || ''}</td>
-                <td className={cell}>{hhmm(e?.total_flight_time)}</td>
-                <td className={cell}>{e && solo && winch ? hhmm(e.total_flight_time) : ''}</td>
-                <td className={cell}>{e && solo && !winch ? hhmm(e.total_flight_time) : ''}</td>
-                <td className={cell}>{e && dual && winch ? hhmm(e.total_flight_time) : ''}</td>
-                <td className={cell}>{e && dual && !winch ? hhmm(e.total_flight_time) : ''}</td>
-                <td className={cell}>{e?.flight?.release_altitude ?? ''}</td>
-                <td className={cell}>{e?.flight?.max_altitude ?? ''}</td>
-                <td className={cell}>{hhmm(e?.cross_country_pic_solo_picus_time)}</td>
-                <td className={cell}>{hhmm(e?.instruction_time)}</td>
-                <td className={cell + ' text-left px-1'}>{e?.flight_content ?? ''}</td>
+              <tr key={idx} style={{ height: '20px' }}>
+                <td className={c}>{dp.mon}</td>
+                <td className={c}>{dp.day}</td>
+                <td className={c}>{e?.aircraft_type ?? ''}</td>
+                <td className={c}>{e?.registration_number ?? ''}</td>
+                <td className={c}>{e?.departure_place ?? ''}</td>
+                <td className={c}>{e?.arrival_place ?? ''}</td>
+                <td className={c}>{tm(e?.departure_time)}</td>
+                <td className={c}>{tm(e?.arrival_time)}</td>
+                <td className={c}>{e?.landing_count || ''}</td>
+                <td className={c}>{hhmm(e?.total_flight_time)}</td>
+                <td className={c}>{e && solo && winch ? hhmm(e.total_flight_time) : ''}</td>
+                <td className={c}>{e && solo && !winch ? hhmm(e.total_flight_time) : ''}</td>
+                <td className={c}>{e && dual && winch ? hhmm(e.total_flight_time) : ''}</td>
+                <td className={c}>{e && dual && !winch ? hhmm(e.total_flight_time) : ''}</td>
+                <td className={c}>{e?.flight?.release_altitude ?? ''}</td>
+                <td className={c}>{e?.flight?.max_altitude ?? ''}</td>
+                <td className={c}></td>{/* mg land glider */}
+                <td className={c}></td>{/* mg land motor */}
+                <td className={c}></td>{/* mg flight time */}
+                <td className={c}></td>{/* mg solo motor */}
+                <td className={c}></td>{/* mg solo glider */}
+                <td className={c}></td>{/* mg dual motor */}
+                <td className={c}></td>{/* mg dual glider */}
+                <td className={c}>{hhmm(e?.cross_country_pic_solo_picus_time)}</td>
+                <td className={c}>{hhmm(e?.instruction_time)}</td>
+                <td className={c}>{hhmm(e?.other_flight_time)}</td>
+                <td className={c + ' text-left px-1'}>{e?.flight_content ?? ''}</td>
               </tr>
             )
           })}
 
-          {/* PAGE TOTAL */}
-          <tr style={{ height: '20px' }} className="font-medium">
-            <td className={cell} colSpan={8}>PAGE TOTAL 頁小計</td>
-            <td className={cell}>{pageLandings || ''}</td>
-            <td className={cell}>{hhmm(pageTime)}</td>
-            <td className={cell}>{hhmm(soloWinch)}</td>
-            <td className={cell}>{hhmm(soloAero)}</td>
-            <td className={cell}>{hhmm(dualWinch)}</td>
-            <td className={cell}>{hhmm(dualAero)}</td>
-            <td className={cell} colSpan={2}></td>
-            <td className={cell}>{hhmm(ccTime)}</td>
-            <td className={cell}>{hhmm(instTime)}</td>
-            <td className={cell}></td>
+          {/* ---- totals block: certify (left) + 3 totals × (TIME/回数) + NOTES (right) ---- */}
+          {/* PAGE TOTAL - TIME */}
+          <tr style={{ height: '16px' }}>
+            <td className={c + ' text-left align-top p-1'} colSpan={6} rowSpan={6}>
+              <div style={{ fontSize: '6px', lineHeight: '1.5' }}>
+                <div>(14)　YEAR MONTH DAY ～ YEAR MONTH DAY</div>
+                <div>　　{f.y} 年 {f.m} 月 {f.d} 日 ～ {l.y} 年 {l.m} 月 {l.d} 日</div>
+                <div className="mt-1">I CERTIFY THAT THE STATEMENTS MADE BY ME ON THIS FORM ARE TRUE.</div>
+                <div>記載のとおり相違ありません</div>
+                <div className="mt-2">PILOT&apos;S NAME　氏名</div>
+                <div className="mt-1">　<span className="inline-block border-b border-black min-w-[140px] text-center font-medium">{pilotName}</span></div>
+              </div>
+            </td>
+            <td className={c + ' font-medium'} colSpan={2} rowSpan={2}>PAGE TOTAL<br />頁小計</td>
+            <td className={c}>TIME 時間</td>
+            {timeCells(page, 'page')}
+            <td className={c + ' text-left align-top p-1'} rowSpan={6}>
+              <div style={{ fontSize: '7px' }}>NOTES<br />備考</div>
+            </td>
           </tr>
-          {/* AMT FORWARD */}
-          <tr style={{ height: '20px' }}>
-            <td className={cell} colSpan={8}>AMT. FORWARD 前頁までの合計</td>
-            <td className={cell}>{forwardCount || ''}</td>
-            <td className={cell}>{hhmm(forwardTime)}</td>
-            <td className={cell} colSpan={9}></td>
+          {/* PAGE TOTAL - 回数 */}
+          <tr style={{ height: '16px' }}>
+            <td className={c}>NO. 回数</td>
+            {countCells(page, 'page')}
           </tr>
-          {/* TOTAL */}
-          <tr style={{ height: '20px' }} className="font-bold">
-            <td className={cell} colSpan={8}>TOTAL 総合計</td>
-            <td className={cell}>{totalCount || ''}</td>
-            <td className={cell}>{hhmm(totalTime)}</td>
-            <td className={cell} colSpan={9}></td>
+          {/* AMT FORWARD - TIME */}
+          <tr style={{ height: '16px' }}>
+            <td className={c} colSpan={2} rowSpan={2}>AMT. FORWARD<br />前頁までの合計</td>
+            <td className={c}>TIME 時間</td>
+            {timeCells(fwd, 'fwd')}
+          </tr>
+          {/* AMT FORWARD - 回数 */}
+          <tr style={{ height: '16px' }}>
+            <td className={c}>NO. 回数</td>
+            {countCells(fwd, 'fwd')}
+          </tr>
+          {/* TOTAL - TIME */}
+          <tr style={{ height: '16px' }} className="font-bold">
+            <td className={c} colSpan={2} rowSpan={2}>TOTAL<br />総合計</td>
+            <td className={c}>TIME 時間</td>
+            {timeCells(total, 'total')}
+          </tr>
+          {/* TOTAL - 回数 */}
+          <tr style={{ height: '16px' }} className="font-bold">
+            <td className={c}>NO. 回数</td>
+            {countCells(total, 'total')}
           </tr>
         </tbody>
       </table>
-      <div className="flex justify-between items-end mt-2 px-1" style={{ fontSize: '8px' }}>
-        <div>(14) 記載のとおり相違ありません　I CERTIFY THAT THE STATEMENTS MADE BY ME ON THIS FORM ARE TRUE.</div>
-        <div>PILOT&apos;S NAME 氏名：<span className="border-b border-black inline-block min-w-[120px] text-center font-medium">{pilotName}</span></div>
-      </div>
     </div>
   )
 }

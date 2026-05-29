@@ -14,15 +14,10 @@ export default function PdfPage() {
   const user = mockUsers.find(u => u.id === userId)
   const entries = mockPersonalLogEntries.filter(e => e.user_id === userId)
 
-  // split into pages, computing running forward totals
-  const pages: { rows: typeof entries; forwardTime: number; forwardCount: number }[] = []
-  let runningTime = 0
-  let runningCount = 0
+  // split into pages, carrying the entries before each page as priorEntries
+  const pages: { rows: typeof entries; prior: typeof entries }[] = []
   for (let i = 0; i < Math.max(1, entries.length); i += ROWS_PER_PAGE) {
-    const slice = entries.slice(i, i + ROWS_PER_PAGE)
-    pages.push({ rows: slice, forwardTime: runningTime, forwardCount: runningCount })
-    runningTime += slice.reduce((s, e) => s + e.total_flight_time, 0)
-    runningCount += slice.reduce((s, e) => s + e.landing_count, 0)
+    pages.push({ rows: entries.slice(i, i + ROWS_PER_PAGE), prior: entries.slice(0, i) })
   }
 
   return (
@@ -66,9 +61,8 @@ export default function PdfPage() {
               <div className="p-4 print:p-2">
                 <LogbookSheet
                   entries={page.rows}
+                  priorEntries={page.prior}
                   pilotName={user?.name ?? ''}
-                  forwardTime={page.forwardTime}
-                  forwardCount={page.forwardCount}
                 />
               </div>
             </div>
