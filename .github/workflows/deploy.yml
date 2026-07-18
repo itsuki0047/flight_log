@@ -24,7 +24,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # NEXT_PUBLIC_* はビルド時にクライアントへ埋め込まれる。
+      # anon キーは公開前提のキー（RLSで保護）のため、リポジトリに直接記載してよい。
       - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://dvouhoflapybxjgtgcfy.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2b3Vob2ZsYXB5YnhqZ3RnY2Z5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1OTY1MzQsImV4cCI6MjA5OTE3MjUzNH0.b7nB7jfWha61BtCjJI-n3OFZbGQhR76DSb906HVso-A
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./out

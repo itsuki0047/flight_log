@@ -2,7 +2,7 @@ export type AircraftCategory = 'glider' | 'airplane' | 'helicopter'
 export type AircraftStatus = 'active' | 'maintenance' | 'grounded' | 'retired'
 export type FlightStatus = 'draft' | 'launched' | 'landed' | 'pending_approval' | 'approved'
 export type PicType = 'PIC' | 'Dual' | 'Solo'
-export type UserRole = 'admin' | 'instructor' | 'operator' | 'member'
+export type UserRole = 'admin' | 'manager' | 'instructor' | 'operator' | 'member'
 
 export interface User {
   id: string
@@ -21,6 +21,7 @@ export interface Aircraft {
   aircraft_category: AircraftCategory
   aircraft_status: AircraftStatus
   is_visible: boolean
+  display_order?: number
   aircraft_memo?: string
   aircraft_initial_airframe_time: number
   aircraft_initial_flight_count: number
@@ -71,6 +72,8 @@ export interface Flight {
   release_altitude?: number
   max_altitude?: number
   aircraft_category: AircraftCategory
+  flight_rule?: 'VFR' | 'IFR'
+  route?: string
   flight_content?: string
   pic_time?: number
   solo_time?: number
@@ -175,6 +178,7 @@ export interface AircraftLogEntry {
 export interface Organization {
   id: string
   name: string
+  invite_code?: string
   default_departure_airports: string[]
   default_arrival_airports: string[]
 }

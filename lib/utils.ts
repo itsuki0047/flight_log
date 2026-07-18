@@ -13,7 +13,8 @@ export function formatMinutes(minutes: number | undefined | null): string {
 }
 
 export function formatTime(iso: string | undefined | null): string {
-  if (!iso) return '--:--'
+  // 日付のみ(時刻未入力)の場合は '--:--' を返す
+  if (!iso || !iso.includes('T')) return '--:--'
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }

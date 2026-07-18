@@ -1,18 +1,8 @@
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+// iCloud退避からの復旧時に再作成した最小構成。
+// next build には影響しない（lint は `npm run lint` 時のみ）。
+import next from 'eslint-config-next'
 
-const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTs,
-  // Override default ignores of eslint-config-next.
-  globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-  ]),
-]);
-
-export default eslintConfig;
+export default [
+  ...(Array.isArray(next) ? next : [next]),
+  { ignores: ['.next/**', 'out/**', 'node_modules/**', 'archive/**'] },
+]
